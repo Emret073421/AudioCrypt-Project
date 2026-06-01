@@ -25,6 +25,14 @@ def veritabani_kur():
     baglanti = get_connection()
     imlec = baglanti.cursor()
 
+    # Geliştirme aşamasında şema güncellemelerini kolaylaştırmak için eski tabloları düşürelim
+    imlec.execute("PRAGMA foreign_keys = 0")
+    imlec.execute("DROP TABLE IF EXISTS ses_kayitlari")
+    imlec.execute("DROP TABLE IF EXISTS musteriler")
+    imlec.execute("DROP TABLE IF EXISTS personeller")
+    imlec.execute("DROP TABLE IF EXISTS yetkiler")
+    imlec.execute("PRAGMA foreign_keys = 1")
+
     # 1. YETKİLER TABLOSU
     imlec.execute('''
     CREATE TABLE IF NOT EXISTS yetkiler (
@@ -60,11 +68,13 @@ def veritabani_kur():
     )
     ''')
 
-    # 4. SES KAYITLARI TABLOSU (Soft Delete durum sütunu ile)
+    # 4. SES KAYITLARI TABLOSU (Eser Adı ve Sanatçı eklenmiş son şema)
     imlec.execute('''
     CREATE TABLE IF NOT EXISTS ses_kayitlari (
         seri_no TEXT PRIMARY KEY,
         orijinal_dosya TEXT,
+        eser_adi TEXT,
+        sanatci TEXT,
         dosya_hash TEXT UNIQUE,
         islem_tarihi TEXT,
         durum TEXT DEFAULT 'Aktif',
@@ -164,6 +174,36 @@ def musterileri_getir():
     baglanti.close()
     return sonuc
 
+def musterileri_detayli_getir():
+    """
+    Tüm müşterileri detaylı bilgileriyle tablo görünümü için çeker.
+    """
+    baglanti = get_connection()
+    imlec = baglanti.cursor()
+    imlec.execute("SELECT unvan_ad, iletisim_eposta, telefon, kayit_tarihi FROM musteriler")
+    sonuc = imlec.fetchall()
+    baglanti.close()
+    return sonuc
+
+def musteri_ekle(unvan_ad, iletisim_eposta, telefon):
+    """
+    Sisteme yeni bir müşteri (Telif Sahibi) kaydeder.
+    """
+    baglanti = get_connection()
+    imlec = baglanti.cursor()
+    tarih_bugun = datetime.now().strftime("%d.%m.%Y")
+    try:
+        imlec.execute('''
+            INSERT INTO musteriler (unvan_ad, iletisim_eposta, telefon, kayit_tarihi)
+            VALUES (?, ?, ?, ?)
+        ''', (unvan_ad, iletisim_eposta, telefon, tarih_bugun))
+        baglanti.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        baglanti.close()
+
 def hash_var_mi(dosya_hash):
     """
     Bir dosyanın hash bilgisinin veritabanında olup olmadığını kontrol eder.
@@ -175,7 +215,7 @@ def hash_var_mi(dosya_hash):
     baglanti.close()
     return sonuc is not None
 
-def ses_kaydi_ekle(seri_no, orijinal_dosya, dosya_hash, musteri_id, personel_id):
+def ses_kaydi_ekle(seri_no, orijinal_dosya, eser_adi, sanatci, dosya_hash, musteri_id, personel_id):
     """
     Yeni şifrelenen ses kaydı kaydını veritabanına ekler.
     """
@@ -185,9 +225,9 @@ def ses_kaydi_ekle(seri_no, orijinal_dosya, dosya_hash, musteri_id, personel_id)
     
     try:
         imlec.execute('''
-            INSERT INTO ses_kayitlari (seri_no, orijinal_dosya, dosya_hash, islem_tarihi, durum, musteri_id, personel_id)
-            VALUES (?, ?, ?, ?, 'Aktif', ?, ?)
-        ''', (seri_no, orijinal_dosya, dosya_hash, tarih_bugun, musteri_id, personel_id))
+            INSERT INTO ses_kayitlari (seri_no, orijinal_dosya, eser_adi, sanatci, dosya_hash, islem_tarihi, durum, musteri_id, personel_id)
+            VALUES (?, ?, ?, ?, ?, ?, 'Aktif', ?, ?)
+        ''', (seri_no, orijinal_dosya, eser_adi, sanatci, dosya_hash, tarih_bugun, musteri_id, personel_id))
         baglanti.commit()
         return True
     except sqlite3.IntegrityError as e:
@@ -203,7 +243,7 @@ def ses_kaydi_bul_seri(seri_no):
     baglanti = get_connection()
     imlec = baglanti.cursor()
     imlec.execute('''
-        SELECT s.seri_no, s.orijinal_dosya, s.islem_tarihi, s.durum, m.unvan_ad, p.ad_soyad
+        SELECT s.seri_no, s.orijinal_dosya, s.eser_adi, s.sanatci, s.islem_tarihi, s.durum, m.unvan_ad, p.ad_soyad
         FROM ses_kayitlari s
         JOIN musteriler m ON s.musteri_id = m.id
         JOIN personeller p ON s.personel_id = p.id
@@ -216,10 +256,12 @@ def ses_kaydi_bul_seri(seri_no):
         return {
             "seri_no": sonuc[0],
             "orijinal_dosya": sonuc[1],
-            "islem_tarihi": sonuc[2],
-            "durum": sonuc[3],
-            "musteri_adi": sonuc[4],
-            "personel_adi": sonuc[5]
+            "eser_adi": sonuc[2],
+            "sanatci": sonuc[3],
+            "islem_tarihi": sonuc[4],
+            "durum": sonuc[5],
+            "musteri_adi": sonuc[6],
+            "personel_adi": sonuc[7]
         }
     return None
 
@@ -231,7 +273,7 @@ def gecmis_listesi_getir(arama_sorgusu=None):
     imlec = baglanti.cursor()
     
     sorgu = '''
-        SELECT s.seri_no, s.orijinal_dosya, m.unvan_ad, p.ad_soyad, s.islem_tarihi, s.durum
+        SELECT s.seri_no, s.orijinal_dosya, s.eser_adi, s.sanatci, m.unvan_ad, p.ad_soyad, s.islem_tarihi, s.durum
         FROM ses_kayitlari s
         JOIN musteriler m ON s.musteri_id = m.id
         JOIN personeller p ON s.personel_id = p.id
@@ -239,9 +281,9 @@ def gecmis_listesi_getir(arama_sorgusu=None):
     
     parametreler = []
     if arama_sorgusu:
-        sorgu += ''' WHERE s.seri_no LIKE ? OR s.orijinal_dosya LIKE ? OR m.unvan_ad LIKE ?'''
+        sorgu += ''' WHERE s.seri_no LIKE ? OR s.orijinal_dosya LIKE ? OR s.eser_adi LIKE ? OR s.sanatci LIKE ? OR m.unvan_ad LIKE ?'''
         like_par = f"%{arama_sorgusu}%"
-        parametreler = [like_par, like_par, like_par]
+        parametreler = [like_par, like_par, like_par, like_par, like_par]
         
     imlec.execute(sorgu, parametreler)
     sonuc = imlec.fetchall()
