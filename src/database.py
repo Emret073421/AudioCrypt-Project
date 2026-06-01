@@ -259,6 +259,51 @@ def ses_kaydi_soft_delete(seri_no):
     baglanti.close()
     return True
 
+def rolleri_getir():
+    """
+    Sistemdeki tüm rolleri ID ve Rol Adı olarak getirir.
+    """
+    baglanti = get_connection()
+    imlec = baglanti.cursor()
+    imlec.execute("SELECT id, rol_adi FROM yetkiler")
+    sonuc = imlec.fetchall()
+    baglanti.close()
+    return sonuc
+
+def personelleri_getir():
+    """
+    Tüm personelleri kullanıcı adı, ad soyad ve rol adı ile getirir.
+    """
+    baglanti = get_connection()
+    imlec = baglanti.cursor()
+    imlec.execute('''
+        SELECT p.kullanici_adi, p.ad_soyad, y.rol_adi 
+        FROM personeller p
+        JOIN yetkiler y ON p.rol_id = y.id
+    ''')
+    sonuc = imlec.fetchall()
+    baglanti.close()
+    return sonuc
+
+def personel_ekle(kullanici_adi, sifre, ad_soyad, rol_id):
+    """
+    Sisteme yeni bir personel ekler.
+    """
+    baglanti = get_connection()
+    imlec = baglanti.cursor()
+    sifre_hash = hash_sifre(sifre)
+    try:
+        imlec.execute('''
+            INSERT INTO personeller (kullanici_adi, sifre_hash, ad_soyad, rol_id)
+            VALUES (?, ?, ?, ?)
+        ''', (kullanici_adi, sifre_hash, ad_soyad, rol_id))
+        baglanti.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        baglanti.close()
+
 if __name__ == "__main__":
     # Test ve ilk kurulum için doğrudan çalıştır
     veritabani_kur()

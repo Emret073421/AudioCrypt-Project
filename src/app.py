@@ -9,7 +9,10 @@ from database import (
     musterileri_getir,
     gecmis_listesi_getir,
     ses_kaydi_soft_delete,
-    ses_kaydi_bul_seri
+    ses_kaydi_bul_seri,
+    rolleri_getir,
+    personel_ekle,
+    personelleri_getir
 )
 
 # CustomTkinter Tema ve Renk Paleti Ayarları
@@ -31,8 +34,15 @@ class AudioCryptApp(ctk.CTk):
         self.current_role = None
         self.current_permissions = {}
 
-        # Müşteri verileri için yerel eşleme
+        # Müşteri ve Rol verileri için yerel eşlemeler
         self.clients_map = {}
+        self.roles_map = {}
+
+        # Varsayılan Girdi/Çıktı klasörlerini hazırla
+        self.default_input_dir = os.path.abspath("input_audio")
+        self.default_output_dir = os.path.abspath("output_audio")
+        os.makedirs(self.default_input_dir, exist_ok=True)
+        os.makedirs(self.default_output_dir, exist_ok=True)
 
         # Ana konteynerler
         self.login_frame = None
@@ -139,7 +149,7 @@ class AudioCryptApp(ctk.CTk):
         app_logo = ctk.CTkLabel(sidebar, text="🔊 AudioCrypt", font=("Arial", 20, "bold"), text_color="#525fe1")
         app_logo.pack(pady=(30, 5))
 
-        version_label = ctk.CTkLabel(sidebar, text="Enterprise v1.1", font=("Arial", 11, "italic"), text_color="gray")
+        version_label = ctk.CTkLabel(sidebar, text="Enterprise v1.2", font=("Arial", 11, "italic"), text_color="gray")
         version_label.pack(pady=(0, 30))
 
         # Kullanıcı Kartı (Profile Card)
@@ -184,11 +194,18 @@ class AudioCryptApp(ctk.CTk):
         self.tabview.add("Otomasyon Paneli")
         self.tabview.add("Tarayıcı (Scanner)")
         self.tabview.add("İşlem Geçmişi")
+        
+        # Eğer kullanıcı admin ise "Personel Yönetimi" sekmesini ekle
+        if self.current_permissions.get("admin_izni") == 1:
+            self.tabview.add("Personel Yönetimi")
 
         # Sekmeleri Yapılandır
         self.setup_automation_tab(self.tabview.tab("Otomasyon Paneli"))
         self.setup_scanner_tab(self.tabview.tab("Tarayıcı (Scanner)"))
         self.setup_history_tab(self.tabview.tab("İşlem Geçmişi"))
+        
+        if self.current_permissions.get("admin_izni") == 1:
+            self.setup_personnel_tab(self.tabview.tab("Personel Yönetimi"))
 
     def handle_logout(self):
         self.current_user_id = None
@@ -196,6 +213,7 @@ class AudioCryptApp(ctk.CTk):
         self.current_role = None
         self.current_permissions = {}
         self.clients_map = {}
+        self.roles_map = {}
         if self.main_frame:
             self.main_frame.pack_forget()
         self.show_login_screen()
@@ -218,6 +236,10 @@ class AudioCryptApp(ctk.CTk):
         input_row.pack(fill="x", pady=2)
         self.input_dir_entry = ctk.CTkEntry(input_row, placeholder_text="Henüz seçilmedi...")
         self.input_dir_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        # Varsayılan Giriş Klasörünü Ekle
+        self.input_dir_entry.insert(0, self.default_input_dir)
+
         self.btn_select_input = ctk.CTkButton(input_row, text="Gözat", width=70, command=self.select_input_dir)
         self.btn_select_input.pack(side="right")
 
@@ -227,6 +249,10 @@ class AudioCryptApp(ctk.CTk):
         output_row.pack(fill="x", pady=2)
         self.output_dir_entry = ctk.CTkEntry(output_row, placeholder_text="Henüz seçilmedi...")
         self.output_dir_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        # Varsayılan Çıkış Klasörünü Ekle
+        self.output_dir_entry.insert(0, self.default_output_dir)
+
         self.btn_select_output = ctk.CTkButton(output_row, text="Gözat", width=70, command=self.select_output_dir)
         self.btn_select_output.pack(side="right")
 
@@ -268,20 +294,22 @@ class AudioCryptApp(ctk.CTk):
         
         self.log_textbox = ctk.CTkTextbox(log_frame, font=("Courier", 12), state="disabled")
         self.log_textbox.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 15))
+        
+        self.append_log("[SİSTEM] Varsayılan girdi/çıktı klasörleri hazırlandı.")
 
     def select_input_dir(self):
         path = filedialog.askdirectory()
         if path:
             self.input_dir_entry.delete(0, tk.END)
             self.input_dir_entry.insert(0, path)
-            self.append_log(f"[SİSTEM] Giriş klasörü seçildi: {path}")
+            self.append_log(f"[SİSTEM] Giriş klasörü güncellendi: {path}")
 
     def select_output_dir(self):
         path = filedialog.askdirectory()
         if path:
             self.output_dir_entry.delete(0, tk.END)
             self.output_dir_entry.insert(0, path)
-            self.append_log(f"[SİSTEM] Çıkış klasörü seçildi: {path}")
+            self.append_log(f"[SİSTEM] Çıkış klasörü güncellendi: {path}")
 
     def toggle_automation(self):
         if not self.input_dir_entry.get() or not self.output_dir_entry.get():
@@ -505,7 +533,6 @@ class AudioCryptApp(ctk.CTk):
         self.populate_history()
 
     def populate_history(self, search_query=None):
-        # Treeview'i temizle
         for item in self.tree.get_children():
             self.tree.delete(item)
 
@@ -531,12 +558,125 @@ class AudioCryptApp(ctk.CTk):
         
         soru = messagebox.askyesno("Kayıt Silme", f"{seri_no} seri numaralı kaydı silmek istediğinizden emin misiniz?\n(Bu işlem soft-delete olarak işaretlenecektir.)")
         if soru:
-            # Veritabanında kaydın durumunu 'Silindi' olarak güncelle
             ses_kaydi_soft_delete(seri_no)
-            
-            # Tabloyu güncel olarak tekrar yükle
             self.populate_history()
             messagebox.showinfo("Başarılı", f"{seri_no} seri numaralı kayıt veritabanında pasifleştirildi (Silindi).")
+
+    # =========================================================================
+    # SEKME 4: PERSONEL YÖNETİMİ (PERSONNEL TAB - ADMIN ONLY)
+    # =========================================================================
+    def setup_personnel_tab(self, tab):
+        tab.grid_columnconfigure(0, weight=1, uniform="group2")
+        tab.grid_columnconfigure(1, weight=1, uniform="group2")
+        tab.grid_rowconfigure(0, weight=1)
+
+        # Sol Panel: Personel Ekleme Formu
+        form_frame = ctk.CTkFrame(tab)
+        form_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
+        
+        ctk.CTkLabel(form_frame, text="Yeni Personel Tanımla", font=("Arial", 16, "bold"), text_color="#525fe1").pack(pady=15)
+
+        # Form Alanları
+        ctk.CTkLabel(form_frame, text="Kullanıcı Adı:", font=("Arial", 12, "bold")).pack(anchor="w", padx=30, pady=(10, 2))
+        self.new_username_entry = ctk.CTkEntry(form_frame, placeholder_text="Kullanıcı adı...")
+        self.new_username_entry.pack(fill="x", padx=30, pady=2)
+
+        ctk.CTkLabel(form_frame, text="Ad Soyad:", font=("Arial", 12, "bold")).pack(anchor="w", padx=30, pady=(10, 2))
+        self.new_fullname_entry = ctk.CTkEntry(form_frame, placeholder_text="Personel adı soyadı...")
+        self.new_fullname_entry.pack(fill="x", padx=30, pady=2)
+
+        ctk.CTkLabel(form_frame, text="Şifre:", font=("Arial", 12, "bold")).pack(anchor="w", padx=30, pady=(10, 2))
+        self.new_password_entry = ctk.CTkEntry(form_frame, placeholder_text="Giriş şifresi...", show="*")
+        self.new_password_entry.pack(fill="x", padx=30, pady=2)
+
+        # Dinamik Rol Seçimi
+        ctk.CTkLabel(form_frame, text="Sistem Rolü:", font=("Arial", 12, "bold")).pack(anchor="w", padx=30, pady=(10, 2))
+        
+        # Veritabanından rolleri çek
+        roller = rolleri_getir()
+        self.roles_map = {rol_adi: rid for rid, rol_adi in roller}
+        role_names = list(self.roles_map.keys())
+
+        self.new_role_combobox = ctk.CTkComboBox(form_frame, values=role_names)
+        self.new_role_combobox.pack(fill="x", padx=30, pady=2)
+        if role_names:
+            self.new_role_combobox.set(role_names[0])
+
+        # Kaydet Butonu
+        btn_save_personnel = ctk.CTkButton(
+            form_frame, 
+            text="Personeli Kaydet", 
+            fg_color="#525fe1", 
+            hover_color="#3d49b8", 
+            font=("Arial", 13, "bold"),
+            height=35,
+            command=self.save_new_personnel
+        )
+        btn_save_personnel.pack(fill="x", padx=30, pady=25)
+
+        # Sağ Panel: Mevcut Personeller Listesi
+        list_frame = ctk.CTkFrame(tab)
+        list_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=10)
+        list_frame.grid_columnconfigure(0, weight=1)
+        list_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(list_frame, text="Kayıtlı Personel Listesi", font=("Arial", 16, "bold")).grid(row=0, column=0, sticky="w", padx=15, pady=15)
+
+        # Treeview Tablosu
+        columns = ("kullanici_adi", "ad_soyad", "rol")
+        self.personnel_tree = ttk.Treeview(list_frame, columns=columns, show="headings")
+        self.personnel_tree.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 15))
+
+        self.personnel_tree.heading("kullanici_adi", text="Kullanıcı Adı")
+        self.personnel_tree.heading("ad_soyad", text="Ad Soyad")
+        self.personnel_tree.heading("rol", text="Sistem Rolü")
+
+        self.personnel_tree.column("kullanici_adi", width=120)
+        self.personnel_tree.column("ad_soyad", width=150)
+        self.personnel_tree.column("rol", width=120)
+
+        # Dikey Scrollbar
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.personnel_tree.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns", pady=(0, 15))
+        self.personnel_tree.configure(yscrollcommand=scrollbar.set)
+
+        # Personelleri veritabanından çek ve listele
+        self.populate_personnel_list()
+
+    def populate_personnel_list(self):
+        # Listeyi temizle
+        for item in self.personnel_tree.get_children():
+            self.personnel_tree.delete(item)
+
+        # Veritabanından personelleri al
+        personeller = personelleri_getir()
+        for row in personeller:
+            self.personnel_tree.insert("", tk.END, values=row)
+
+    def save_new_personnel(self):
+        username = self.new_username_entry.get().strip()
+        fullname = self.new_fullname_entry.get().strip()
+        password = self.new_password_entry.get().strip()
+        role_name = self.new_role_combobox.get()
+        role_id = self.roles_map.get(role_name)
+
+        if not username or not fullname or not password or not role_id:
+            messagebox.showwarning("Eksik Bilgi", "Lütfen tüm personel bilgilerini doldurun!")
+            return
+
+        # Veritabanına kaydet
+        basarili = personel_ekle(username, password, fullname, role_id)
+
+        if basarili:
+            messagebox.showinfo("Başarılı", f"Personel '{fullname}' başarıyla kaydedildi!")
+            # Formu temizle
+            self.new_username_entry.delete(0, tk.END)
+            self.new_fullname_entry.delete(0, tk.END)
+            self.new_password_entry.delete(0, tk.END)
+            # Listeyi yenile
+            self.populate_personnel_list()
+        else:
+            messagebox.showerror("Hata", f"'{username}' kullanıcı adı sistemde zaten mevcut!")
 
 if __name__ == "__main__":
     app = AudioCryptApp()
