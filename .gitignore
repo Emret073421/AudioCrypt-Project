@@ -4,3 +4,4 @@ __pycache__/
 venv/
 *.wav
 !assets/*.wav
+*.db
