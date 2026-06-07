@@ -1,3 +1,4 @@
+import sqlite3
 import os
 import shutil
 import uuid
@@ -22,10 +23,39 @@ from database import (
     personel_ekle,
     personelleri_getir
 )
+from watermark import (
+    WatermarkCapacityError,
+    WatermarkReadError,
+    build_watermark_payload,
+    embed_image_json_watermark,
+    embed_json_watermark,
+    extract_image_json_watermark,
+    extract_json_watermark,
+    payload_to_json,
+)
 
 # CustomTkinter Tema ve Renk Paleti Ayarları
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")  # Modern mavi tema
+
+COLORS = {
+    "bg": "#0b0d12",
+    "sidebar": "#10131a",
+    "panel": "#171b24",
+    "panel_alt": "#1e2430",
+    "line": "#2b3442",
+    "text": "#f3f6fb",
+    "muted": "#8f9bad",
+    "accent": "#4f7cff",
+    "accent_hover": "#3f63cf",
+    "success": "#2fa572",
+    "success_hover": "#248259",
+    "danger": "#e15252",
+    "danger_hover": "#b83d3d",
+}
+
+FONT_FAMILY = "Arial"
+
 
 def dosya_hash_hesapla(dosya_yolu):
     """
@@ -47,8 +77,9 @@ class AudioCryptApp(ctk.CTk):
 
         # Pencere Boyut ve Başlık Ayarları
         self.title("AudioCrypt Enterprise - Dijital Hak Yönetimi & Telif Koruma")
-        self.geometry("1024x680")
-        self.minsize(950, 620)
+        self.geometry("1180x760")
+        self.minsize(1060, 680)
+        self.configure(fg_color=COLORS["bg"])
 
         # Aktif Kullanıcı ve Rol Bilgisi (Başlangıçta Boş)
         self.current_user_id = None
@@ -63,11 +94,16 @@ class AudioCryptApp(ctk.CTk):
         # Varsayılan Girdi/Çıktı klasörlerini hazırla
         self.default_input_dir = os.path.abspath("input_audio")
         self.default_output_dir = os.path.abspath("output_audio")
+        self.default_cover_input_dir = os.path.abspath("input_covers")
+        self.default_cover_output_dir = os.path.abspath("output_covers")
         os.makedirs(self.default_input_dir, exist_ok=True)
         os.makedirs(self.default_output_dir, exist_ok=True)
+        os.makedirs(self.default_cover_input_dir, exist_ok=True)
+        os.makedirs(self.default_cover_output_dir, exist_ok=True)
 
         # Seçilen lisanslanacak dosya yolu
         self.selected_licensing_file = None
+        self.selected_cover_file = None
 
         # Ana konteynerler
         self.login_frame = None
@@ -84,48 +120,90 @@ class AudioCryptApp(ctk.CTk):
             self.main_frame.pack_forget()
 
         # Giriş Frame
-        self.login_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.login_frame = ctk.CTkFrame(self, fg_color=COLORS["bg"])
         self.login_frame.pack(expand=True, fill="both")
 
         # Giriş Kartı (Merkezi Panel)
-        login_card = ctk.CTkFrame(self.login_frame, width=400, height=450, corner_radius=15)
+        login_card = ctk.CTkFrame(
+            self.login_frame,
+            width=430,
+            height=500,
+            corner_radius=12,
+            fg_color=COLORS["panel"],
+            border_width=1,
+            border_color=COLORS["line"],
+        )
         login_card.place(relx=0.5, rely=0.5, anchor="center")
 
         # Logo / Simge
-        logo_label = ctk.CTkLabel(login_card, text="🔊", font=("Arial", 48))
-        logo_label.pack(pady=(30, 5))
+        logo_badge = ctk.CTkFrame(login_card, width=74, height=74, corner_radius=18, fg_color=COLORS["panel_alt"])
+        logo_badge.pack(pady=(32, 12))
+        logo_badge.pack_propagate(False)
 
-        title_label = ctk.CTkLabel(login_card, text="AudioCrypt Enterprise", font=("Arial", 22, "bold"))
+        logo_label = ctk.CTkLabel(logo_badge, text="🔊", font=(FONT_FAMILY, 36))
+        logo_label.pack(expand=True)
+
+        title_label = ctk.CTkLabel(login_card, text="AudioCrypt Enterprise", font=(FONT_FAMILY, 24, "bold"), text_color=COLORS["text"])
         title_label.pack(pady=(0, 5))
 
-        subtitle_label = ctk.CTkLabel(login_card, text="Lütfen kurumsal bilgilerinizle giriş yapın", font=("Arial", 12), text_color="gray")
-        subtitle_label.pack(pady=(0, 30))
+        subtitle_label = ctk.CTkLabel(
+            login_card,
+            text="Stüdyo lisanslama ve JSON watermark paneli",
+            font=(FONT_FAMILY, 12),
+            text_color=COLORS["muted"]
+        )
+        subtitle_label.pack(pady=(0, 28))
 
         # Giriş Giriş Alanları
-        self.username_entry = ctk.CTkEntry(login_card, placeholder_text="Kullanıcı Adı", width=280, height=40)
+        self.username_entry = ctk.CTkEntry(
+            login_card,
+            placeholder_text="Kullanıcı adı",
+            width=300,
+            height=42,
+            fg_color=COLORS["panel_alt"],
+            border_color=COLORS["line"],
+        )
         self.username_entry.pack(pady=10)
 
-        self.password_entry = ctk.CTkEntry(login_card, placeholder_text="Şifre", show="*", width=280, height=40)
+        self.password_entry = ctk.CTkEntry(
+            login_card,
+            placeholder_text="Şifre",
+            show="*",
+            width=300,
+            height=42,
+            fg_color=COLORS["panel_alt"],
+            border_color=COLORS["line"],
+        )
         self.password_entry.pack(pady=10)
 
         # Hızlı Rol Testi için Bilgilendirme Notu
+        info_card = ctk.CTkFrame(login_card, fg_color="#111723", corner_radius=8, border_width=1, border_color=COLORS["line"])
+        info_card.pack(pady=(6, 14), padx=50, fill="x")
+
+        ctk.CTkLabel(
+            info_card,
+            text="Demo kullanıcıları",
+            font=(FONT_FAMILY, 11, "bold"),
+            text_color=COLORS["muted"]
+        ).pack(anchor="w", padx=12, pady=(10, 2))
+
         info_label = ctk.CTkLabel(
-            login_card, 
-            text="Veritabanı Kullanıcıları:\nadmin (Yönetici)  |  prod (Prodüktör)  |  staj (Stajyer)\nŞifreler: 123456", 
-            font=("Arial", 10), 
-            text_color="gray50"
+            info_card,
+            text="admin  |  prod  |  staj\nŞifre: 123456",
+            font=(FONT_FAMILY, 11),
+            text_color=COLORS["text"]
         )
-        info_label.pack(pady=10)
+        info_label.pack(anchor="w", padx=12, pady=(0, 10))
 
         # Giriş Butonu
         login_btn = ctk.CTkButton(
             login_card, 
             text="Sisteme Giriş Yap", 
-            font=("Arial", 14, "bold"), 
-            width=280, 
-            height=40, 
-            fg_color="#525fe1", 
-            hover_color="#3d49b8",
+            font=(FONT_FAMILY, 14, "bold"),
+            width=300,
+            height=44,
+            fg_color=COLORS["accent"],
+            hover_color=COLORS["accent_hover"],
             command=self.handle_login
         )
         login_btn.pack(pady=(15, 30))
@@ -160,37 +238,50 @@ class AudioCryptApp(ctk.CTk):
         self.yenile_musteri_listesi()
 
         # Ana Frame
-        self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_frame = ctk.CTkFrame(self, fg_color=COLORS["bg"])
         self.main_frame.pack(fill="both", expand=True)
 
         # 1. SOL PANEL (SIDEBAR)
-        sidebar = ctk.CTkFrame(self.main_frame, width=220, corner_radius=0, fg_color="#111111")
+        sidebar = ctk.CTkFrame(self.main_frame, width=245, corner_radius=0, fg_color=COLORS["sidebar"])
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
         # Logo
-        app_logo = ctk.CTkLabel(sidebar, text="🔊 AudioCrypt", font=("Arial", 20, "bold"), text_color="#525fe1")
-        app_logo.pack(pady=(30, 5))
+        app_logo = ctk.CTkLabel(sidebar, text="🔊 AudioCrypt", font=(FONT_FAMILY, 21, "bold"), text_color=COLORS["text"])
+        app_logo.pack(pady=(30, 4))
 
-        version_label = ctk.CTkLabel(sidebar, text="Enterprise v1.3", font=("Arial", 11, "italic"), text_color="gray")
-        version_label.pack(pady=(0, 30))
+        version_label = ctk.CTkLabel(sidebar, text="Enterprise v1.4 / JSON WM", font=(FONT_FAMILY, 11), text_color=COLORS["muted"])
+        version_label.pack(pady=(0, 24))
 
         # Kullanıcı Kartı (Profile Card)
-        user_card = ctk.CTkFrame(sidebar, fg_color="#1c1c1c", corner_radius=10)
-        user_card.pack(pady=10, padx=15, fill="x")
+        user_card = ctk.CTkFrame(sidebar, fg_color=COLORS["panel"], corner_radius=10, border_width=1, border_color=COLORS["line"])
+        user_card.pack(pady=8, padx=16, fill="x")
 
-        user_name_lbl = ctk.CTkLabel(user_card, text=self.current_user, font=("Arial", 12, "bold"))
-        user_name_lbl.pack(pady=(10, 2), padx=10)
+        ctk.CTkLabel(user_card, text="Aktif Oturum", font=(FONT_FAMILY, 10, "bold"), text_color=COLORS["muted"]).pack(anchor="w", pady=(12, 0), padx=14)
+
+        user_name_lbl = ctk.CTkLabel(user_card, text=self.current_user, font=(FONT_FAMILY, 13, "bold"), text_color=COLORS["text"])
+        user_name_lbl.pack(anchor="w", pady=(2, 4), padx=14)
 
         role_badge = ctk.CTkLabel(
             user_card, 
             text=self.current_role.upper(), 
-            font=("Arial", 9, "bold"), 
-            text_color="#2fa572" if self.current_role != "Sistem Yöneticisi" else "#e15252",
-            fg_color="#2b2b2b",
-            corner_radius=5
+            font=(FONT_FAMILY, 9, "bold"),
+            text_color=COLORS["success"] if self.current_role != "Sistem Yöneticisi" else COLORS["danger"],
+            fg_color=COLORS["panel_alt"],
+            corner_radius=6
         )
-        role_badge.pack(pady=(0, 10), padx=10)
+        role_badge.pack(anchor="w", pady=(0, 12), padx=14)
+
+        pipeline_card = ctk.CTkFrame(sidebar, fg_color="#0f1725", corner_radius=10, border_width=1, border_color=COLORS["line"])
+        pipeline_card.pack(pady=12, padx=16, fill="x")
+        ctk.CTkLabel(pipeline_card, text="Dosya Akışı", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["accent"]).pack(anchor="w", padx=14, pady=(12, 4))
+        ctk.CTkLabel(
+            pipeline_card,
+            text="input_audio: temiz ses\noutput_audio: mühürlü ses\ninput_covers: temiz kapak\noutput_covers: mühürlü kapak",
+            font=(FONT_FAMILY, 10),
+            text_color=COLORS["muted"],
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=(0, 12))
 
         # Sidebar Menü Butonları / Bilgilendirme
         sidebar_spacer = ctk.CTkLabel(sidebar, text="", fg_color="transparent")
@@ -200,18 +291,60 @@ class AudioCryptApp(ctk.CTk):
         logout_btn = ctk.CTkButton(
             sidebar, 
             text="Oturumu Kapat", 
-            fg_color="#333333", 
-            hover_color="#e15252",
+            fg_color=COLORS["panel_alt"],
+            hover_color=COLORS["danger_hover"],
             command=self.handle_logout
         )
         logout_btn.pack(pady=20, padx=15, fill="x")
 
         # 2. SAĞ PANEL (İÇERİK ALANI)
         content_area = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        content_area.pack(side="right", fill="both", expand=True, padx=20, pady=20)
+        content_area.pack(side="right", fill="both", expand=True, padx=22, pady=20)
+
+        header = ctk.CTkFrame(content_area, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 14))
+
+        header_text = ctk.CTkFrame(header, fg_color="transparent")
+        header_text.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkLabel(
+            header_text,
+            text="Dijital Ses Lisanslama Konsolu",
+            font=(FONT_FAMILY, 24, "bold"),
+            text_color=COLORS["text"]
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            header_text,
+            text="Stüdyo kayıtlarını, albüm kapaklarını ve JSON mühürlü çıktıları takip edin.",
+            font=(FONT_FAMILY, 12),
+            text_color=COLORS["muted"]
+        ).pack(anchor="w", pady=(3, 0))
+
+        status_pill = ctk.CTkLabel(
+            header,
+            text="JSON Watermark Aktif",
+            font=(FONT_FAMILY, 11, "bold"),
+            text_color=COLORS["success"],
+            fg_color="#10251b",
+            corner_radius=8,
+            width=150,
+            height=32
+        )
+        status_pill.pack(side="right", padx=(12, 0))
 
         # Sekme Kontrolü (Tabview)
-        self.tabview = ctk.CTkTabview(content_area)
+        self.tabview = ctk.CTkTabview(
+            content_area,
+            fg_color=COLORS["panel"],
+            border_width=1,
+            border_color=COLORS["line"],
+            segmented_button_fg_color=COLORS["panel_alt"],
+            segmented_button_selected_color=COLORS["accent"],
+            segmented_button_selected_hover_color=COLORS["accent_hover"],
+            segmented_button_unselected_color=COLORS["panel_alt"],
+            segmented_button_unselected_hover_color="#263143",
+        )
         self.tabview.pack(fill="both", expand=True)
 
         self.tabview.add("Lisanslama Paneli")
@@ -249,6 +382,7 @@ class AudioCryptApp(ctk.CTk):
         self.clients_map = {}
         self.roles_map = {}
         self.selected_licensing_file = None
+        self.selected_cover_file = None
         if self.main_frame:
             self.main_frame.pack_forget()
         self.show_login_screen()
@@ -262,32 +396,48 @@ class AudioCryptApp(ctk.CTk):
         tab.grid_rowconfigure(0, weight=1)
 
         # Sol Panel: Lisanslama Bilgileri Formu
-        form_frame = ctk.CTkScrollableFrame(tab, label_text="Eser Lisanslama Formu", label_font=("Arial", 14, "bold"))
+        form_frame = ctk.CTkScrollableFrame(
+            tab,
+            label_text="Eser Lisanslama Formu",
+            label_font=(FONT_FAMILY, 14, "bold"),
+            fg_color=COLORS["panel_alt"],
+            border_width=1,
+            border_color=COLORS["line"],
+        )
         form_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
 
         # Dosya Seçimi
-        ctk.CTkLabel(form_frame, text="Lisanslanacak Temiz Ses Dosyası (.wav):", font=("Arial", 12, "bold")).pack(anchor="w", pady=(10, 2))
+        ctk.CTkLabel(form_frame, text="Lisanslanacak Temiz Ses Dosyası (.wav):", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(10, 2))
         file_row = ctk.CTkFrame(form_frame, fg_color="transparent")
         file_row.pack(fill="x", pady=2)
-        self.licensing_file_entry = ctk.CTkEntry(file_row, placeholder_text="Lütfen bir dosya seçin...")
+        self.licensing_file_entry = ctk.CTkEntry(file_row, placeholder_text="Lütfen bir dosya seçin...", fg_color=COLORS["panel"], border_color=COLORS["line"])
         self.licensing_file_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        self.btn_select_lic_file = ctk.CTkButton(file_row, text="Dosya Seç", width=80, command=self.select_licensing_file_picker)
+        self.btn_select_lic_file = ctk.CTkButton(file_row, text="Dosya Seç", width=90, fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"], command=self.select_licensing_file_picker)
         self.btn_select_lic_file.pack(side="right")
 
+        # Albüm Kapağı Seçimi
+        ctk.CTkLabel(form_frame, text="Albüm Kapağı (opsiyonel .png/.jpg):", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(15, 2))
+        cover_row = ctk.CTkFrame(form_frame, fg_color="transparent")
+        cover_row.pack(fill="x", pady=2)
+        self.cover_file_entry = ctk.CTkEntry(cover_row, placeholder_text="Albüm kapağı seçilirse aynı lisansa bağlanır...", fg_color=COLORS["panel"], border_color=COLORS["line"])
+        self.cover_file_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.btn_select_cover_file = ctk.CTkButton(cover_row, text="Kapak Seç", width=90, fg_color=COLORS["panel"], hover_color="#263143", border_width=1, border_color=COLORS["line"], command=self.select_cover_file_picker)
+        self.btn_select_cover_file.pack(side="right")
+
         # Eser Adı
-        ctk.CTkLabel(form_frame, text="Eser (Şarkı/Kayıt) Adı:", font=("Arial", 12, "bold")).pack(anchor="w", pady=(15, 2))
-        self.track_name_entry = ctk.CTkEntry(form_frame, placeholder_text="Örn: Intro Final Mix")
+        ctk.CTkLabel(form_frame, text="Eser (Şarkı/Kayıt) Adı:", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(15, 2))
+        self.track_name_entry = ctk.CTkEntry(form_frame, placeholder_text="Örn: Intro Final Mix", fg_color=COLORS["panel"], border_color=COLORS["line"])
         self.track_name_entry.pack(fill="x", pady=2)
 
         # Sanatçı Adı
-        ctk.CTkLabel(form_frame, text="Sanatçı / Yorumcu Adı:", font=("Arial", 12, "bold")).pack(anchor="w", pady=(15, 2))
-        self.artist_name_entry = ctk.CTkEntry(form_frame, placeholder_text="Örn: Emre Tuncer")
+        ctk.CTkLabel(form_frame, text="Sanatçı / Yorumcu Adı:", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(15, 2))
+        self.artist_name_entry = ctk.CTkEntry(form_frame, placeholder_text="Örn: Emre Tuncer", fg_color=COLORS["panel"], border_color=COLORS["line"])
         self.artist_name_entry.pack(fill="x", pady=2)
 
         # Telif Sahibi (Müşteri Dropdown)
-        ctk.CTkLabel(form_frame, text="Telif Sahibi (Müşteri):", font=("Arial", 12, "bold")).pack(anchor="w", pady=(15, 2))
+        ctk.CTkLabel(form_frame, text="Telif Sahibi (Müşteri):", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(15, 2))
         client_names = list(self.clients_map.keys())
-        self.lic_client_combobox = ctk.CTkComboBox(form_frame, values=client_names)
+        self.lic_client_combobox = ctk.CTkComboBox(form_frame, values=client_names, fg_color=COLORS["panel"], border_color=COLORS["line"], button_color=COLORS["accent"], button_hover_color=COLORS["accent_hover"])
         self.lic_client_combobox.pack(fill="x", pady=2)
         if client_names:
             self.lic_client_combobox.set(client_names[0])
@@ -296,10 +446,10 @@ class AudioCryptApp(ctk.CTk):
         self.btn_run_licensing = ctk.CTkButton(
             form_frame, 
             text="Lisansla ve Dijital Mühür Göm", 
-            fg_color="#2fa572", 
-            hover_color="#248259", 
-            font=("Arial", 14, "bold"),
-            height=45,
+            fg_color=COLORS["success"],
+            hover_color=COLORS["success_hover"],
+            font=(FONT_FAMILY, 14, "bold"),
+            height=46,
             command=self.run_audio_licensing
         )
         self.btn_run_licensing.pack(fill="x", pady=35)
@@ -308,19 +458,21 @@ class AudioCryptApp(ctk.CTk):
         if self.current_permissions.get("yazma_izni") != 1:
             self.btn_run_licensing.configure(state="disabled", fg_color="gray30", text="Lisanslama Yetkiniz Yok")
             self.btn_select_lic_file.configure(state="disabled")
+            self.btn_select_cover_file.configure(state="disabled")
             self.track_name_entry.configure(state="disabled")
             self.artist_name_entry.configure(state="disabled")
             self.lic_client_combobox.configure(state="disabled")
+            self.cover_file_entry.configure(state="disabled")
 
         # Sağ Panel: Canlı Log / İzleme
-        log_frame = ctk.CTkFrame(tab)
+        log_frame = ctk.CTkFrame(tab, fg_color=COLORS["panel_alt"], border_width=1, border_color=COLORS["line"])
         log_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=10)
         log_frame.grid_rowconfigure(1, weight=1)
         log_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(log_frame, text="Lisanslama Konsol Günlüğü", font=("Arial", 14, "bold")).grid(row=0, column=0, sticky="w", padx=15, pady=10)
+        ctk.CTkLabel(log_frame, text="Lisanslama Konsol Günlüğü", font=(FONT_FAMILY, 14, "bold"), text_color=COLORS["text"]).grid(row=0, column=0, sticky="w", padx=15, pady=12)
         
-        self.log_textbox = ctk.CTkTextbox(log_frame, font=("Courier", 12), state="disabled")
+        self.log_textbox = ctk.CTkTextbox(log_frame, font=("Consolas", 12), state="disabled", fg_color=COLORS["panel"], border_width=1, border_color=COLORS["line"])
         self.log_textbox.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 15))
         
         self.append_log("[HAZIR] Lisanslama paneli aktif. Dosya yüklenmesi bekleniyor.")
@@ -332,6 +484,17 @@ class AudioCryptApp(ctk.CTk):
             self.licensing_file_entry.delete(0, tk.END)
             self.licensing_file_entry.insert(0, path)
             self.append_log(f"[SEÇİLDİ] Dosya yüklendi: {os.path.basename(path)}")
+
+    def select_cover_file_picker(self):
+        path = filedialog.askopenfilename(filetypes=[("Albüm Kapağı", "*.png *.jpg *.jpeg"), ("Tüm Dosyalar", "*.*")])
+        if path:
+            if os.path.splitext(path)[1].lower() not in [".png", ".jpg", ".jpeg"]:
+                messagebox.showwarning("Geçersiz Dosya", "Albüm kapağı için lütfen .png, .jpg veya .jpeg dosyası seçin.")
+                return
+            self.selected_cover_file = path
+            self.cover_file_entry.delete(0, tk.END)
+            self.cover_file_entry.insert(0, path)
+            self.append_log(f"[SEÇİLDİ] Albüm kapağı yüklendi: {os.path.basename(path)}")
 
     def run_audio_licensing(self):
         file_path = self.selected_licensing_file
@@ -367,20 +530,73 @@ class AudioCryptApp(ctk.CTk):
         seri_no = f"AC-{uuid.uuid4().hex[:8].upper()}-{datetime.now().strftime('%Y')}"
         self.append_log(f"-> Atanan Seri Numarası: {seri_no}")
 
-        # 4. Dosyaları kopyalama (Giriş/Temiz ve Çıkış/Lisanslı)
+        # 4. Dosyaları kaydetme (Giriş/Temiz ve Çıkış/Şifreli)
         original_filename = os.path.basename(file_path)
         temiz_hedef = os.path.join(self.default_input_dir, f"{seri_no}_temiz.wav")
-        lisansli_hedef = os.path.join(self.default_output_dir, f"{seri_no}_lisansli.wav")
+        sifreli_hedef = os.path.join(self.default_output_dir, f"{seri_no}_sifreli.wav")
 
         self.append_log("[4/5] Orijinal ses 'input_audio' klasörüne aktarılıyor...")
         try:
             shutil.copy2(file_path, temiz_hedef)
             self.append_log(f"-> Temiz kopya kaydedildi: {os.path.basename(temiz_hedef)}")
             
-            # TODO: Gelecek Fazda burası kopyalamak yerine watermark.py çağırarak yazacak
-            self.append_log("-> [Robust Watermarking] Frekans alanında (FFT) genlik mühürleme simülasyonu yapılıyor...")
-            shutil.copy2(file_path, lisansli_hedef)
-            self.append_log(f"-> Lisanslı kopya kaydedildi: {os.path.basename(lisansli_hedef)}")
+            self.append_log("-> JSON lisans bilgisi hazırlanıyor...")
+            watermark_payload = build_watermark_payload(
+                seri_no=seri_no,
+                eser_adi=track_name,
+                sanatci=artist_name,
+                telif_sahibi=client_name,
+                lisanslayan=self.current_user,
+                orijinal_dosya=original_filename,
+                dosya_hash=file_hash,
+                medya_turu="audio",
+            )
+
+            self.append_log("-> Ses içine JSON dijital mühür gömülüyor...")
+            watermark_stats = embed_json_watermark(file_path, sifreli_hedef, watermark_payload)
+            self.append_log(
+                f"-> JSON mühür: {watermark_stats['payload_bytes']} byte, "
+                f"kullanılan ses alanı: {watermark_stats['used_audio_bytes']} byte"
+            )
+            self.append_log(f"-> Şifreli/mühürlü çıktı kaydedildi: {os.path.basename(sifreli_hedef)}")
+
+            if self.selected_cover_file:
+                cover_filename = os.path.basename(self.selected_cover_file)
+                cover_ext = os.path.splitext(cover_filename)[1].lower() or ".jpg"
+                cover_hash = dosya_hash_hesapla(self.selected_cover_file)
+                cover_clean_target = os.path.join(self.default_cover_input_dir, f"{seri_no}_kapak_temiz{cover_ext}")
+                cover_secure_target = os.path.join(self.default_cover_output_dir, f"{seri_no}_kapak_sifreli{cover_ext}")
+
+                self.append_log("-> Albüm kapağı 'input_covers' klasörüne aktarılıyor...")
+                shutil.copy2(self.selected_cover_file, cover_clean_target)
+                self.append_log(f"-> Temiz kapak kaydedildi: {os.path.basename(cover_clean_target)}")
+
+                cover_payload = build_watermark_payload(
+                    seri_no=seri_no,
+                    eser_adi=track_name,
+                    sanatci=artist_name,
+                    telif_sahibi=client_name,
+                    lisanslayan=self.current_user,
+                    orijinal_dosya=cover_filename,
+                    dosya_hash=cover_hash,
+                    medya_turu="album_cover",
+                    ek_bilgiler={
+                        "bagli_ses_dosyasi": original_filename,
+                        "bagli_ses_hash": file_hash,
+                    },
+                )
+
+                self.append_log("-> Albüm kapağı içine JSON lisans mühürü ekleniyor...")
+                cover_stats = embed_image_json_watermark(self.selected_cover_file, cover_secure_target, cover_payload)
+                self.append_log(
+                    f"-> Kapak JSON mühür: {cover_stats['payload_bytes']} byte, "
+                    f"çıktı boyutu: {cover_stats['output_file_bytes']} byte"
+                )
+                self.append_log(f"-> Mühürlü kapak kaydedildi: {os.path.basename(cover_secure_target)}")
+        except WatermarkCapacityError as e:
+            self.append_log(f"[HATA] {e}")
+            messagebox.showerror("Kapasite Hatası", str(e))
+            return
         except Exception as e:
             self.append_log(f"[HATA] Dosya işlemleri başarısız: {e}")
             return
@@ -405,7 +621,9 @@ class AudioCryptApp(ctk.CTk):
             self.track_name_entry.delete(0, tk.END)
             self.artist_name_entry.delete(0, tk.END)
             self.licensing_file_entry.delete(0, tk.END)
+            self.cover_file_entry.delete(0, tk.END)
             self.selected_licensing_file = None
+            self.selected_cover_file = None
             
             # Tabloyu yenile
             if hasattr(self, 'tree'):
@@ -427,28 +645,28 @@ class AudioCryptApp(ctk.CTk):
         tab.grid_rowconfigure(1, weight=1)
 
         # Üst Kısım: Dosya Seçme
-        top_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        top_frame = ctk.CTkFrame(tab, fg_color=COLORS["panel_alt"], border_width=1, border_color=COLORS["line"], corner_radius=10)
         top_frame.grid(row=0, column=0, sticky="ew", pady=10, padx=10)
         
-        ctk.CTkLabel(top_frame, text="Telif Analizi Yapılacak Şüpheli Ses Dosyası:", font=("Arial", 12, "bold")).pack(side="left", padx=5)
-        self.scan_file_entry = ctk.CTkEntry(top_frame, placeholder_text="Seçilen dosya...", width=400)
-        self.scan_file_entry.pack(side="left", padx=10, fill="x", expand=True)
+        ctk.CTkLabel(top_frame, text="Analiz edilecek medya:", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(side="left", padx=(14, 6), pady=12)
+        self.scan_file_entry = ctk.CTkEntry(top_frame, placeholder_text="Mühürlü .wav, .png veya .jpg dosyasını seçin...", width=400, fg_color=COLORS["panel"], border_color=COLORS["line"])
+        self.scan_file_entry.pack(side="left", padx=8, fill="x", expand=True)
         
-        btn_select_scan = ctk.CTkButton(top_frame, text="Dosya Seç (.wav)", command=self.select_scan_file)
+        btn_select_scan = ctk.CTkButton(top_frame, text="Dosya Seç", fg_color=COLORS["panel"], hover_color="#263143", border_width=1, border_color=COLORS["line"], command=self.select_scan_file)
         btn_select_scan.pack(side="left", padx=5)
 
         self.btn_run_scan = ctk.CTkButton(
             top_frame, 
-            text="Analiz Et (Hash ve Mühür)", 
-            fg_color="#525fe1", 
-            hover_color="#3d49b8", 
-            font=("Arial", 12, "bold"),
+            text="JSON Mühürü Oku",
+            fg_color=COLORS["accent"],
+            hover_color=COLORS["accent_hover"],
+            font=(FONT_FAMILY, 12, "bold"),
             command=self.run_scanner_analysis
         )
-        self.btn_run_scan.pack(side="left", padx=10)
+        self.btn_run_scan.pack(side="left", padx=(5, 14))
 
         # Alt Kısım: Detaylı Bilgi Kartı
-        self.result_card = ctk.CTkFrame(tab, corner_radius=15)
+        self.result_card = ctk.CTkFrame(tab, corner_radius=12, fg_color=COLORS["panel_alt"], border_width=1, border_color=COLORS["line"])
         self.result_card.grid(row=1, column=0, sticky="nsew", pady=10, padx=10)
         self.result_card.grid_columnconfigure(0, weight=1)
         self.result_card.grid_rowconfigure(0, weight=1)
@@ -456,9 +674,9 @@ class AudioCryptApp(ctk.CTk):
         # Sonuç Boş Ekranı
         self.result_placeholder = ctk.CTkLabel(
             self.result_card, 
-            text="Analiz sonuçlarını ve telif kartını görüntülemek için\nyukarıdan bir ses dosyası seçip 'Analiz Et' butonuna tıklayın.",
-            font=("Arial", 14),
-            text_color="gray"
+            text="Analiz sonuçlarını ve telif kartını görüntülemek için\nyukarıdan bir ses ya da kapak dosyası seçip 'JSON Mühürü Oku' butonuna tıklayın.",
+            font=(FONT_FAMILY, 14),
+            text_color=COLORS["muted"]
         )
         self.result_placeholder.pack(expand=True)
 
@@ -466,7 +684,7 @@ class AudioCryptApp(ctk.CTk):
         self.info_panel = ctk.CTkFrame(self.result_card, fg_color="transparent")
 
     def select_scan_file(self):
-        path = filedialog.askopenfilename(filetypes=[("Ses Dosyası", "*.wav")])
+        path = filedialog.askopenfilename(filetypes=[("Mühürlü Medya", "*.wav *.png *.jpg *.jpeg"), ("Ses Dosyası", "*.wav"), ("Albüm Kapağı", "*.png *.jpg *.jpeg")])
         if path:
             self.scan_file_entry.delete(0, tk.END)
             self.scan_file_entry.insert(0, path)
@@ -483,24 +701,43 @@ class AudioCryptApp(ctk.CTk):
         for widget in self.info_panel.winfo_children():
             widget.destroy()
 
-        # 1. Dosyanın SHA-256 hash'ini al
-        uploaded_hash = dosya_hash_hesapla(file_path)
-        
-        # 2. Veritabanında eşleşen hash sorgula (Eğer temiz veya lisanslı ses doğrudan yüklenirse yakalamak için)
-        baglanti = sqlite3.connect("audiocrypt_kurumsal.db")
-        imlec = baglanti.cursor()
-        imlec.execute("SELECT seri_no FROM ses_kayitlari WHERE dosya_hash = ?", (uploaded_hash,))
-        hash_sonuc = imlec.fetchone()
-        baglanti.close()
-
+        watermark_payload = None
         db_record = None
-        if hash_sonuc:
-            db_record = ses_kaydi_bul_seri(hash_sonuc[0])
+        extension = os.path.splitext(file_path)[1].lower()
+        is_image = extension in [".png", ".jpg", ".jpeg"]
+        watermark_status = "Medya içinde okunabilir JSON mühür bulunamadı."
+
+        try:
+            if is_image:
+                watermark_payload = extract_image_json_watermark(file_path)
+            else:
+                watermark_payload = extract_json_watermark(file_path)
+
+            if watermark_payload:
+                medya_etiketi = "albüm kapağının" if is_image else "ses dosyasının"
+                watermark_status = f"JSON mühür {medya_etiketi} içinden başarıyla okundu."
+                extracted_serial = watermark_payload.get("seri_no")
+                if extracted_serial:
+                    db_record = ses_kaydi_bul_seri(extracted_serial)
+        except WatermarkReadError as e:
+            watermark_status = f"JSON mühür okuma hatası: {e}"
+        except Exception as e:
+            watermark_status = f"Medya mühürü analiz edilirken hata oluştu: {e}"
+
+        # JSON mühür yoksa eski davranış olarak hash eşleşmesini dene.
+        uploaded_hash = dosya_hash_hesapla(file_path)
+        if not db_record and uploaded_hash and not is_image:
+            baglanti = sqlite3.connect("audiocrypt_kurumsal.db")
+            imlec = baglanti.cursor()
+            imlec.execute("SELECT seri_no FROM ses_kayitlari WHERE dosya_hash = ?", (uploaded_hash,))
+            hash_sonuc = imlec.fetchone()
+            baglanti.close()
+
+            if hash_sonuc:
+                db_record = ses_kaydi_bul_seri(hash_sonuc[0])
         
-        # 3. Eğer hash ile bulunamazsa (veya dosya adı üzerinden sorgulamak gerekirse)
-        # TODO: Gelecek adımda burası extracted_serial = extract_watermark(file_path) çağıracak.
+        # Son çare olarak eski demo çıktıları için dosya adından seri no okumayı dene.
         if not db_record:
-            # Örnek testler için dosya adından seri no çıkarmayı deneyelim (AC-XXXXXX yapısı varsa)
             filename = os.path.basename(file_path)
             if filename.startswith("AC-"):
                 seri_parca = filename.split("_")[0]
@@ -508,11 +745,11 @@ class AudioCryptApp(ctk.CTk):
 
         if db_record:
             # 1. Başlık
-            title = ctk.CTkLabel(self.info_panel, text="🛡️ Telif Kartı ve Sahiplik Bilgisi", font=("Arial", 18, "bold"), text_color="#2fa572")
+            title = ctk.CTkLabel(self.info_panel, text="🛡️ Telif Kartı ve Sahiplik Bilgisi", font=(FONT_FAMILY, 20, "bold"), text_color=COLORS["success"])
             title.pack(pady=15)
 
             # 2. Bilgi Grid
-            grid_frame = ctk.CTkFrame(self.info_panel, fg_color="#1e1e1e", corner_radius=10)
+            grid_frame = ctk.CTkFrame(self.info_panel, fg_color=COLORS["panel"], corner_radius=10, border_width=1, border_color=COLORS["line"])
             grid_frame.pack(fill="x", padx=40, pady=10)
 
             labels = [
@@ -523,28 +760,62 @@ class AudioCryptApp(ctk.CTk):
                 ("Telif Sahibi (Müşteri):", db_record["musteri_adi"]),
                 ("Lisanslayan Personel:", db_record["personel_adi"]),
                 ("Lisans Tarihi:", db_record["islem_tarihi"]),
-                ("Mühür Durumu:", db_record["durum"])
+                ("Mühür Durumu:", db_record["durum"]),
+                ("Okunan Medya Türü:", watermark_payload.get("medya_turu", "Bilinmiyor") if watermark_payload else "Hash/Dosya adı eşleşmesi")
             ]
 
             for i, (key, value) in enumerate(labels):
                 row = ctk.CTkFrame(grid_frame, fg_color="transparent")
                 row.pack(fill="x", padx=15, pady=6)
-                k_lbl = ctk.CTkLabel(row, text=key, font=("Arial", 12, "bold"), text_color="gray")
+                k_lbl = ctk.CTkLabel(row, text=key, font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["muted"])
                 k_lbl.pack(side="left")
-                v_lbl = ctk.CTkLabel(row, text=value, font=("Arial", 12, "bold"), text_color="white")
+                v_lbl = ctk.CTkLabel(row, text=value, font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"])
                 v_lbl.pack(side="right")
+
+            json_frame = ctk.CTkFrame(self.info_panel, fg_color=COLORS["panel"], corner_radius=10, border_width=1, border_color=COLORS["line"])
+            json_frame.pack(fill="both", expand=True, padx=40, pady=(10, 20))
+
+            ctk.CTkLabel(
+                json_frame,
+                text="Medya İçinden Okunan JSON Mühür",
+                font=(FONT_FAMILY, 13, "bold"),
+                text_color=COLORS["accent"]
+            ).pack(anchor="w", padx=15, pady=(12, 4))
+
+            ctk.CTkLabel(
+                json_frame,
+                text=watermark_status,
+                font=(FONT_FAMILY, 11),
+                text_color=COLORS["muted"]
+            ).pack(anchor="w", padx=15, pady=(0, 6))
+
+            json_text = payload_to_json(watermark_payload) if watermark_payload else "{\n  \"watermark\": null\n}"
+            json_box = ctk.CTkTextbox(json_frame, font=("Consolas", 11), height=150, fg_color="#0c1118", border_width=1, border_color=COLORS["line"])
+            json_box.pack(fill="both", expand=True, padx=15, pady=(0, 15))
+            json_box.insert(tk.END, json_text)
+            json_box.configure(state="disabled")
         else:
             # Eşleşme Bulunamadı
-            error_title = ctk.CTkLabel(self.info_panel, text="❌ Telif Eşleşmesi Bulunamadı", font=("Arial", 18, "bold"), text_color="#e15252")
+            error_text = "❌ Telif Eşleşmesi Bulunamadı"
+            if watermark_payload:
+                error_text = "⚠️ JSON Mühür Okundu Ama Kayıt Bulunamadı"
+
+            error_title = ctk.CTkLabel(self.info_panel, text=error_text, font=(FONT_FAMILY, 20, "bold"), text_color=COLORS["danger"])
             error_title.pack(pady=30)
             
             error_desc = ctk.CTkLabel(
                 self.info_panel, 
-                text="Bu ses dosyasının içinde geçerli bir dijital mühür (watermark)\nbulunamadı veya veritabanı kayıtları ile eşleşmedi.",
-                font=("Arial", 12),
-                text_color="gray"
+                text=watermark_status,
+                font=(FONT_FAMILY, 12),
+                text_color=COLORS["muted"]
             )
             error_desc.pack()
+
+            if watermark_payload:
+                json_box = ctk.CTkTextbox(self.info_panel, font=("Consolas", 11), height=220, fg_color="#0c1118", border_width=1, border_color=COLORS["line"])
+                json_box.pack(fill="both", expand=True, padx=40, pady=20)
+                json_box.insert(tk.END, payload_to_json(watermark_payload))
+                json_box.configure(state="disabled")
 
         self.info_panel.pack(fill="both", expand=True, padx=20, pady=20)
 
@@ -556,31 +827,31 @@ class AudioCryptApp(ctk.CTk):
         tab.grid_rowconfigure(1, weight=1)
 
         # Üst Kısım: Arama Barı ve Filtreleme
-        top_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        top_frame = ctk.CTkFrame(tab, fg_color=COLORS["panel_alt"], border_width=1, border_color=COLORS["line"], corner_radius=10)
         top_frame.grid(row=0, column=0, sticky="ew", pady=10, padx=10)
 
-        self.search_entry = ctk.CTkEntry(top_frame, placeholder_text="Seri No, Eser, Sanatçı veya Müşteri ile ara...", width=350)
-        self.search_entry.pack(side="left", padx=5)
+        self.search_entry = ctk.CTkEntry(top_frame, placeholder_text="Seri no, eser, sanatçı veya müşteri ara...", width=360, fg_color=COLORS["panel"], border_color=COLORS["line"])
+        self.search_entry.pack(side="left", padx=(14, 6), pady=12)
 
-        btn_search = ctk.CTkButton(top_frame, text="Filtrele", width=80, command=self.filter_history)
+        btn_search = ctk.CTkButton(top_frame, text="Filtrele", width=88, fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"], command=self.filter_history)
         btn_search.pack(side="left", padx=5)
 
         # Sağ üst: Silme (Soft-delete) butonu
         self.btn_delete_record = ctk.CTkButton(
             top_frame, 
             text="Lisansı Askıya Al (Soft-Delete)", 
-            fg_color="#e15252", 
-            hover_color="#b83d3d",
+            fg_color=COLORS["danger"],
+            hover_color=COLORS["danger_hover"],
             command=self.delete_selected_record
         )
-        self.btn_delete_record.pack(side="right", padx=5)
+        self.btn_delete_record.pack(side="right", padx=(5, 14))
 
         # Rol Yetki Kontrolü (RBAC) (Silme izni sadece Sistem Yöneticisi / admin_izni olanlardadır)
         if self.current_permissions.get("silme_izni") != 1:
             self.btn_delete_record.configure(state="disabled", fg_color="gray30", text="Silme Yetkiniz Yok")
 
         # Orta Kısım: Kayıt Tablosu
-        table_frame = ctk.CTkFrame(tab)
+        table_frame = ctk.CTkFrame(tab, fg_color=COLORS["panel_alt"], border_width=1, border_color=COLORS["line"], corner_radius=10)
         table_frame.grid(row=1, column=0, sticky="nsew", pady=10, padx=10)
         table_frame.grid_columnconfigure(0, weight=1)
         table_frame.grid_rowconfigure(0, weight=1)
@@ -589,17 +860,17 @@ class AudioCryptApp(ctk.CTk):
         style = ttk.Style()
         style.theme_use("default")
         style.configure("Treeview", 
-                        background="#2a2a2a", 
-                        foreground="white", 
+                        background=COLORS["panel"], 
+                        foreground=COLORS["text"], 
                         rowheight=25, 
-                        fieldbackground="#2a2a2a", 
-                        bordercolor="#333333", 
+                        fieldbackground=COLORS["panel"], 
+                        bordercolor=COLORS["line"], 
                         borderwidth=0)
-        style.map('Treeview', background=[('selected', '#525fe1')])
+        style.map('Treeview', background=[('selected', COLORS["accent"])])
         style.configure("Treeview.Heading", 
-                        background="#1f1f1f", 
-                        foreground="white", 
-                        bordercolor="#333333", 
+                        background=COLORS["sidebar"],
+                        foreground=COLORS["text"],
+                        bordercolor=COLORS["line"],
                         borderwidth=1)
 
         columns = ("seri_no", "dosya_adi", "eser_adi", "sanatci", "musteri", "personel", "tarih", "durum")

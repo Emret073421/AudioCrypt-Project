@@ -23,7 +23,7 @@ def mesaj_oku(audio_yolu):
 
 # ÇALIŞTIRMA (OKUMA)
 # DOSYANIN EN ALTINDA BUNLAR OLMALI:
-okunacak_dosya = "gizli_ses_4.wav"
+okunacak_dosya = "gizli_ses_2.wav"
 sonuc = mesaj_oku(okunacak_dosya)
 print(f"Sesten Çıkarılan Gizli Mesaj: {sonuc}")
 print("--- OKUMA İŞLEMİ BİTTİ ---")
