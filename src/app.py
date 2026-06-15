@@ -27,9 +27,7 @@ from watermark import (
     WatermarkCapacityError,
     WatermarkReadError,
     build_watermark_payload,
-    embed_image_json_watermark,
     embed_json_watermark,
-    extract_image_json_watermark,
     extract_json_watermark,
     payload_to_json,
 )
@@ -59,7 +57,8 @@ FONT_FAMILY = "Arial"
 
 def dosya_hash_hesapla(dosya_yolu):
     """
-    Seçilen ses dosyasının benzersiz SHA-256 hash değerini hesaplar.
+    Bilgisayardaki bir dosyanın içeriğini okuyarak ona özel, parmak izi gibi benzersiz
+    bir kod (SHA-256 hash) oluşturur. Dosyada en ufak bir değişiklik olursa bu kod tamamen değişir.
     """
     hasher = hashlib.sha256()
     try:
@@ -72,6 +71,10 @@ def dosya_hash_hesapla(dosya_yolu):
         return None
 
 class AudioCryptApp(ctk.CTk):
+    """
+    Uygulamanın ana sınıfı. Tüm ekranlar (Giriş, Lisanslama, Tarama vb.) 
+    bu sınıf üzerinden yönetilir ve gösterilir.
+    """
     def __init__(self):
         super().__init__()
 
@@ -209,6 +212,11 @@ class AudioCryptApp(ctk.CTk):
         login_btn.pack(pady=(15, 30))
 
     def handle_login(self):
+        """
+        Kullanıcı 'Giriş Yap' butonuna bastığında çalışır.
+        Veritabanından kullanıcı adı ve şifreyi kontrol eder.
+        Eşleşme sağlanırsa yetkileri yükleyip ana ekranı açar.
+        """
         username = self.username_entry.get().strip().lower()
         password = self.password_entry.get().strip()
 
@@ -272,16 +280,7 @@ class AudioCryptApp(ctk.CTk):
         )
         role_badge.pack(anchor="w", pady=(0, 12), padx=14)
 
-        pipeline_card = ctk.CTkFrame(sidebar, fg_color="#0f1725", corner_radius=10, border_width=1, border_color=COLORS["line"])
-        pipeline_card.pack(pady=12, padx=16, fill="x")
-        ctk.CTkLabel(pipeline_card, text="Dosya Akışı", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["accent"]).pack(anchor="w", padx=14, pady=(12, 4))
-        ctk.CTkLabel(
-            pipeline_card,
-            text="input_audio: temiz ses\noutput_audio: mühürlü ses\ninput_covers: temiz kapak\noutput_covers: mühürlü kapak",
-            font=(FONT_FAMILY, 10),
-            text_color=COLORS["muted"],
-            justify="left"
-        ).pack(anchor="w", padx=14, pady=(0, 12))
+
 
         # Sidebar Menü Butonları / Bilgilendirme
         sidebar_spacer = ctk.CTkLabel(sidebar, text="", fg_color="transparent")
@@ -321,17 +320,7 @@ class AudioCryptApp(ctk.CTk):
             text_color=COLORS["muted"]
         ).pack(anchor="w", pady=(3, 0))
 
-        status_pill = ctk.CTkLabel(
-            header,
-            text="JSON Watermark Aktif",
-            font=(FONT_FAMILY, 11, "bold"),
-            text_color=COLORS["success"],
-            fg_color="#10251b",
-            corner_radius=8,
-            width=150,
-            height=32
-        )
-        status_pill.pack(side="right", padx=(12, 0))
+
 
         # Sekme Kontrolü (Tabview)
         self.tabview = ctk.CTkTabview(
@@ -391,6 +380,10 @@ class AudioCryptApp(ctk.CTk):
     # SEKME 1: LİSANSLAMA PANELİ (LICENSING TAB)
     # =========================================================================
     def setup_licensing_tab(self, tab):
+        """
+        Lisanslama paneli sekmesinin içindeki metin kutularını, butonları ve 
+        sağ taraftaki siyah log (işlem günlükleri) ekranını çizer ve ayarlar.
+        """
         tab.grid_columnconfigure(0, weight=1, uniform="group_lic")
         tab.grid_columnconfigure(1, weight=1, uniform="group_lic")
         tab.grid_rowconfigure(0, weight=1)
@@ -406,26 +399,22 @@ class AudioCryptApp(ctk.CTk):
         )
         form_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
 
-        # Dosya Seçimi
-        ctk.CTkLabel(form_frame, text="Lisanslanacak Temiz Ses Dosyası (.wav):", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(10, 2))
+        # Dosya/Klasör Seçimi
+        ctk.CTkLabel(form_frame, text="Lisanslanacak Temiz Ses Dosyası / Albüm Klasörü:", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(10, 2))
         file_row = ctk.CTkFrame(form_frame, fg_color="transparent")
         file_row.pack(fill="x", pady=2)
-        self.licensing_file_entry = ctk.CTkEntry(file_row, placeholder_text="Lütfen bir dosya seçin...", fg_color=COLORS["panel"], border_color=COLORS["line"])
+        self.licensing_file_entry = ctk.CTkEntry(file_row, placeholder_text="Lütfen bir dosya veya klasör seçin...", fg_color=COLORS["panel"], border_color=COLORS["line"])
         self.licensing_file_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.btn_select_lic_folder = ctk.CTkButton(file_row, text="Klasör Seç", width=90, fg_color=COLORS["panel"], hover_color="#263143", border_width=1, border_color=COLORS["line"], command=self.select_licensing_folder_picker)
+        self.btn_select_lic_folder.pack(side="right", padx=(5, 0))
         self.btn_select_lic_file = ctk.CTkButton(file_row, text="Dosya Seç", width=90, fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"], command=self.select_licensing_file_picker)
         self.btn_select_lic_file.pack(side="right")
 
-        # Albüm Kapağı Seçimi
-        ctk.CTkLabel(form_frame, text="Albüm Kapağı (opsiyonel .png/.jpg):", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(15, 2))
-        cover_row = ctk.CTkFrame(form_frame, fg_color="transparent")
-        cover_row.pack(fill="x", pady=2)
-        self.cover_file_entry = ctk.CTkEntry(cover_row, placeholder_text="Albüm kapağı seçilirse aynı lisansa bağlanır...", fg_color=COLORS["panel"], border_color=COLORS["line"])
-        self.cover_file_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        self.btn_select_cover_file = ctk.CTkButton(cover_row, text="Kapak Seç", width=90, fg_color=COLORS["panel"], hover_color="#263143", border_width=1, border_color=COLORS["line"], command=self.select_cover_file_picker)
-        self.btn_select_cover_file.pack(side="right")
+
 
         # Eser Adı
-        ctk.CTkLabel(form_frame, text="Eser (Şarkı/Kayıt) Adı:", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"]).pack(anchor="w", pady=(15, 2))
+        self.track_name_label = ctk.CTkLabel(form_frame, text="Eser (Şarkı/Kayıt) Adı:", font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"])
+        self.track_name_label.pack(anchor="w", pady=(15, 2))
         self.track_name_entry = ctk.CTkEntry(form_frame, placeholder_text="Örn: Intro Final Mix", fg_color=COLORS["panel"], border_color=COLORS["line"])
         self.track_name_entry.pack(fill="x", pady=2)
 
@@ -458,11 +447,11 @@ class AudioCryptApp(ctk.CTk):
         if self.current_permissions.get("yazma_izni") != 1:
             self.btn_run_licensing.configure(state="disabled", fg_color="gray30", text="Lisanslama Yetkiniz Yok")
             self.btn_select_lic_file.configure(state="disabled")
-            self.btn_select_cover_file.configure(state="disabled")
+            self.btn_select_lic_folder.configure(state="disabled")
             self.track_name_entry.configure(state="disabled")
             self.artist_name_entry.configure(state="disabled")
             self.lic_client_combobox.configure(state="disabled")
-            self.cover_file_entry.configure(state="disabled")
+
 
         # Sağ Panel: Canlı Log / İzleme
         log_frame = ctk.CTkFrame(tab, fg_color=COLORS["panel_alt"], border_width=1, border_color=COLORS["line"])
@@ -481,155 +470,169 @@ class AudioCryptApp(ctk.CTk):
         path = filedialog.askopenfilename(filetypes=[("Ses Dosyası", "*.wav")])
         if path:
             self.selected_licensing_file = path
+            if not hasattr(self, 'is_batch_mode'):
+                self.is_batch_mode = False
+            self.is_batch_mode = False
             self.licensing_file_entry.delete(0, tk.END)
             self.licensing_file_entry.insert(0, path)
             self.append_log(f"[SEÇİLDİ] Dosya yüklendi: {os.path.basename(path)}")
+            self.track_name_label.configure(text="Eser (Şarkı/Kayıt) Adı:")
+            self.track_name_entry.configure(placeholder_text="Örn: Intro Final Mix")
 
-    def select_cover_file_picker(self):
-        path = filedialog.askopenfilename(filetypes=[("Albüm Kapağı", "*.png *.jpg *.jpeg"), ("Tüm Dosyalar", "*.*")])
+    def select_licensing_folder_picker(self):
+        path = filedialog.askdirectory(title="Lisanslanacak Albüm Klasörünü Seçin")
         if path:
-            if os.path.splitext(path)[1].lower() not in [".png", ".jpg", ".jpeg"]:
-                messagebox.showwarning("Geçersiz Dosya", "Albüm kapağı için lütfen .png, .jpg veya .jpeg dosyası seçin.")
-                return
-            self.selected_cover_file = path
-            self.cover_file_entry.delete(0, tk.END)
-            self.cover_file_entry.insert(0, path)
-            self.append_log(f"[SEÇİLDİ] Albüm kapağı yüklendi: {os.path.basename(path)}")
+            self.selected_licensing_file = path
+            self.is_batch_mode = True
+            self.licensing_file_entry.delete(0, tk.END)
+            self.licensing_file_entry.insert(0, path)
+            self.append_log(f"[SEÇİLDİ] Albüm Klasörü yüklendi: {os.path.basename(path)}")
+            self.track_name_label.configure(text="Albüm Adı:")
+            self.track_name_entry.configure(placeholder_text="Örn: Albüm Adı")
 
     def run_audio_licensing(self):
-        file_path = self.selected_licensing_file
+        """
+        [LİSANSLAMADA KULLANILIR]
+        Kullanıcı 'Lisansla ve Dijital Mühür Göm' butonuna bastığında çalışan ana fonksiyondur.
+        Seçilen ses dosyasının/klasörünün telif kartını hazırlar, LSB mühürü gömer ve SQLite'a kaydeder.
+        """
+        # Form alanlarındaki seçilmiş dosya yolu, şarkı adı, sanatçı adı ve telif sahiplerini alıyoruz
+        file_path = getattr(self, 'selected_licensing_file', None)
         track_name = self.track_name_entry.get().strip()
         artist_name = self.artist_name_entry.get().strip()
         client_name = self.lic_client_combobox.get()
-        client_id = self.clients_map.get(client_name)
+        client_id = getattr(self, 'clients_map', {}).get(client_name)
 
+        # Gerekli tüm alanlar doldurulmuş mu kontrol ediyoruz
         if not file_path or not track_name or not artist_name or not client_id:
-            messagebox.showwarning("Eksik Bilgi", "Lütfen tüm form alanlarını doldurun ve bir ses dosyası seçin!")
+            messagebox.showwarning("Eksik Bilgi", "Lütfen tüm form alanlarını doldurun ve bir ses dosyası/klasörü seçin!")
             return
 
-        self.append_log("\n--- LİSANSLAMA İŞLEMİ BAŞLATILDI ---")
+        is_batch = getattr(self, 'is_batch_mode', False)
         
-        # 1. Benzersiz dosya hash'ini al
-        self.append_log("[1/5] Ses dosyasının benzersiz hash değeri hesaplanıyor...")
-        file_hash = dosya_hash_hesapla(file_path)
-        if not file_hash:
-            self.append_log("[HATA] Hash hesaplanamadı, işlem iptal edildi.")
-            return
-        
-        self.append_log(f"-> Hash: {file_hash[:20]}...{file_hash[-10:]}")
+        # İşlenecek ses dosyalarını topluyoruz (Tekli veya Klasördeki toplu WAV dosyaları)
+        files_to_process = []
+        if is_batch:
+            if not os.path.isdir(file_path):
+                messagebox.showerror("Hata", "Seçilen yol geçerli bir klasör değil!")
+                return
+            for f in os.listdir(file_path):
+                if f.lower().endswith(".wav"):
+                    files_to_process.append(os.path.join(file_path, f))
+            if not files_to_process:
+                messagebox.showwarning("Uyarı", "Seçilen klasörde hiç .wav dosyası bulunamadı!")
+                return
+        else:
+            files_to_process.append(file_path)
 
-        # 2. Mükerrer kayıt önleme (Hash kontrolü)
-        self.append_log("[2/5] Mükerrer kayıt kontrolü yapılıyor...")
-        if hash_var_mi(file_hash):
-            self.append_log("[HATA] Bu ses dosyası sistemde zaten lisanslı! Tekrar şifrelenemez.")
-            messagebox.showerror("Hata", "Bu ses dosyası daha önce lisanslanmış (mükerrer kayıt)!")
-            return
-        
-        # 3. Seri Numarası Üretimi
-        self.append_log("[3/5] Telif için benzersiz Seri Numarası (Watermark ID) üretiliyor...")
-        seri_no = f"AC-{uuid.uuid4().hex[:8].upper()}-{datetime.now().strftime('%Y')}"
-        self.append_log(f"-> Atanan Seri Numarası: {seri_no}")
+        self.append_log(f"\n--- LİSANSLAMA İŞLEMİ BAŞLATILDI ({len(files_to_process)} Dosya) ---")
 
-        # 4. Dosyaları kaydetme (Giriş/Temiz ve Çıkış/Şifreli)
-        original_filename = os.path.basename(file_path)
-        temiz_hedef = os.path.join(self.default_input_dir, f"{seri_no}_temiz.wav")
-        sifreli_hedef = os.path.join(self.default_output_dir, f"{seri_no}_sifreli.wav")
+        success_count = 0
+        error_count = 0
 
-        self.append_log("[4/5] Orijinal ses 'input_audio' klasörüne aktarılıyor...")
-        try:
-            shutil.copy2(file_path, temiz_hedef)
-            self.append_log(f"-> Temiz kopya kaydedildi: {os.path.basename(temiz_hedef)}")
+        # Her bir ses dosyasını sırayla işlemeye başlıyoruz
+        for index, current_file in enumerate(files_to_process, 1):
+            original_filename = os.path.basename(current_file)
+            self.append_log(f"\n[{index}/{len(files_to_process)}] İşleniyor: {original_filename}")
+
+            current_track_name = track_name
+            if is_batch:
+                # Toplu albüm lisanslamada, girilen şarkı isminin arkasına dosya adını ekliyoruz
+                base_name = os.path.splitext(original_filename)[0]
+                current_track_name = f"{track_name} - {base_name}"
+
+            # -----------------------------------------------------------------
+            # ADIM 1: Orijinal Sesin Parmak İzinin (SHA-256 Hash) Alınması
+            # -----------------------------------------------------------------
+            file_hash = dosya_hash_hesapla(current_file)
+            if not file_hash:
+                self.append_log("[HATA] Hash hesaplanamadı, bu dosya atlanıyor.")
+                error_count += 1
+                continue
             
-            self.append_log("-> JSON lisans bilgisi hazırlanıyor...")
-            watermark_payload = build_watermark_payload(
-                seri_no=seri_no,
-                eser_adi=track_name,
-                sanatci=artist_name,
-                telif_sahibi=client_name,
-                lisanslayan=self.current_user,
-                orijinal_dosya=original_filename,
-                dosya_hash=file_hash,
-                medya_turu="audio",
-            )
+            # -----------------------------------------------------------------
+            # ADIM 2: Veritabanında Çift Kayıt (Mükerrerlik) Kontrolü
+            # -----------------------------------------------------------------
+            if hash_var_mi(file_hash):
+                self.append_log("[HATA] Bu dosya sistemde zaten lisanslı! Tekrar şifrelenemez.")
+                error_count += 1
+                continue
+            
+            # -----------------------------------------------------------------
+            # ADIM 3: Benzersiz Takip Seri Numarası Üretimi (UUID)
+            # -----------------------------------------------------------------
+            seri_no = f"AC-{uuid.uuid4().hex[:8].upper()}-{datetime.now().strftime('%Y')}"
+            
+            # Kaydedilecek dosya yollarını belirliyoruz (input_audio ve output_audio)
+            temiz_hedef = os.path.join(self.default_input_dir, f"{seri_no}_temiz.wav")
+            sifreli_hedef = os.path.join(self.default_output_dir, f"{seri_no}_sifreli.wav")
 
-            self.append_log("-> Ses içine JSON dijital mühür gömülüyor...")
-            watermark_stats = embed_json_watermark(file_path, sifreli_hedef, watermark_payload)
-            self.append_log(
-                f"-> JSON mühür: {watermark_stats['payload_bytes']} byte, "
-                f"kullanılan ses alanı: {watermark_stats['used_audio_bytes']} byte"
-            )
-            self.append_log(f"-> Şifreli/mühürlü çıktı kaydedildi: {os.path.basename(sifreli_hedef)}")
-
-            if self.selected_cover_file:
-                cover_filename = os.path.basename(self.selected_cover_file)
-                cover_ext = os.path.splitext(cover_filename)[1].lower() or ".jpg"
-                cover_hash = dosya_hash_hesapla(self.selected_cover_file)
-                cover_clean_target = os.path.join(self.default_cover_input_dir, f"{seri_no}_kapak_temiz{cover_ext}")
-                cover_secure_target = os.path.join(self.default_cover_output_dir, f"{seri_no}_kapak_sifreli{cover_ext}")
-
-                self.append_log("-> Albüm kapağı 'input_covers' klasörüne aktarılıyor...")
-                shutil.copy2(self.selected_cover_file, cover_clean_target)
-                self.append_log(f"-> Temiz kapak kaydedildi: {os.path.basename(cover_clean_target)}")
-
-                cover_payload = build_watermark_payload(
+            try:
+                # -------------------------------------------------------------
+                # ADIM 4: Temiz Dosyanın Yedeklenmesi ve Mühür Gömülmesi
+                # -------------------------------------------------------------
+                # Temiz ses dosyasını "input_audio" altına kopyalıyoruz
+                shutil.copy2(current_file, temiz_hedef)
+                
+                # Mühür JSON payload'unu (Telif kartını) oluşturuyoruz
+                watermark_payload = build_watermark_payload(
                     seri_no=seri_no,
-                    eser_adi=track_name,
+                    eser_adi=current_track_name,
                     sanatci=artist_name,
                     telif_sahibi=client_name,
                     lisanslayan=self.current_user,
-                    orijinal_dosya=cover_filename,
-                    dosya_hash=cover_hash,
-                    medya_turu="album_cover",
-                    ek_bilgiler={
-                        "bagli_ses_dosyasi": original_filename,
-                        "bagli_ses_hash": file_hash,
-                    },
+                    orijinal_dosya=original_filename,
+                    dosya_hash=file_hash,
+                    medya_turu="audio",
                 )
 
-                self.append_log("-> Albüm kapağı içine JSON lisans mühürü ekleniyor...")
-                cover_stats = embed_image_json_watermark(self.selected_cover_file, cover_secure_target, cover_payload)
-                self.append_log(
-                    f"-> Kapak JSON mühür: {cover_stats['payload_bytes']} byte, "
-                    f"çıktı boyutu: {cover_stats['output_file_bytes']} byte"
-                )
-                self.append_log(f"-> Mühürlü kapak kaydedildi: {os.path.basename(cover_secure_target)}")
-        except WatermarkCapacityError as e:
-            self.append_log(f"[HATA] {e}")
-            messagebox.showerror("Kapasite Hatası", str(e))
-            return
-        except Exception as e:
-            self.append_log(f"[HATA] Dosya işlemleri başarısız: {e}")
-            return
+                # JSON watermark verisini LSB steganografi ile ses dosyasının içine gömüyoruz
+                watermark_stats = embed_json_watermark(current_file, sifreli_hedef, watermark_payload)
+                self.append_log(f"-> Mühürlendi: {os.path.basename(sifreli_hedef)}")
+            
+            except WatermarkCapacityError as e:
+                self.append_log(f"[HATA] {e}")
+                error_count += 1
+                continue
+            except Exception as e:
+                self.append_log(f"[HATA] Dosya işlemleri başarısız: {e}")
+                error_count += 1
+                continue
 
-        # 5. Veritabanına kayıt
-        self.append_log("[5/5] Lisans kartı veritabanına işleniyor...")
-        basarili = ses_kaydi_ekle(
-            seri_no=seri_no,
-            orijinal_dosya=original_filename,
-            eser_adi=track_name,
-            sanatci=artist_name,
-            dosya_hash=file_hash,
-            musteri_id=client_id,
-            personel_id=self.current_user_id
-        )
+            # -----------------------------------------------------------------
+            # ADIM 5: Eser Bilgilerinin Veritabanına (SQLite) Arşivlenmesi
+            # -----------------------------------------------------------------
+            basarili = ses_kaydi_ekle(
+                seri_no=seri_no,
+                orijinal_dosya=original_filename,
+                eser_adi=current_track_name,
+                sanatci=artist_name,
+                dosya_hash=file_hash, # Temiz dosyanın hash'ini kaydediyoruz
+                musteri_id=client_id,
+                personel_id=self.current_user_id
+            )
 
-        if basarili:
-            self.append_log("[BAŞARILI] Lisanslama işlemi başarıyla tamamlandı!")
-            messagebox.showinfo("Başarılı", f"Eser başarıyla lisanslandı!\nAtanan Seri No: {seri_no}")
+            if basarili:
+                success_count += 1
+            else:
+                self.append_log("[HATA] Veritabanı kaydı oluşturulamadı!")
+                error_count += 1
+
+        # Sonuç mesajlarının gösterilmesi
+        self.append_log(f"\n[BİTTİ] İşlem tamamlandı. {success_count} Başarılı, {error_count} Hata.")
+        if success_count > 0:
+            messagebox.showinfo("Tamamlandı", f"{success_count} adet dosya başarıyla lisanslandı!\nHatalı dosya sayısı: {error_count}")
             
             # Formu temizle
             self.track_name_entry.delete(0, tk.END)
             self.artist_name_entry.delete(0, tk.END)
             self.licensing_file_entry.delete(0, tk.END)
-            self.cover_file_entry.delete(0, tk.END)
             self.selected_licensing_file = None
-            self.selected_cover_file = None
             
-            # Tabloyu yenile
+            # Arayüz geçmiş tablosunu anında yenile
             if hasattr(self, 'tree'):
                 self.populate_history()
-        else:
-            self.append_log("[HATA] Veritabanı kaydı oluşturulamadı!")
+
 
     def append_log(self, text):
         self.log_textbox.configure(state="normal")
@@ -674,7 +677,7 @@ class AudioCryptApp(ctk.CTk):
         # Sonuç Boş Ekranı
         self.result_placeholder = ctk.CTkLabel(
             self.result_card, 
-            text="Analiz sonuçlarını ve telif kartını görüntülemek için\nyukarıdan bir ses ya da kapak dosyası seçip 'JSON Mühürü Oku' butonuna tıklayın.",
+            text="Analiz sonuçlarını ve telif kartını görüntülemek için\nyukarıdan bir ses dosyası seçip 'JSON Mühürü Oku' butonuna tıklayın.",
             font=(FONT_FAMILY, 14),
             text_color=COLORS["muted"]
         )
@@ -684,17 +687,24 @@ class AudioCryptApp(ctk.CTk):
         self.info_panel = ctk.CTkFrame(self.result_card, fg_color="transparent")
 
     def select_scan_file(self):
-        path = filedialog.askopenfilename(filetypes=[("Mühürlü Medya", "*.wav *.png *.jpg *.jpeg"), ("Ses Dosyası", "*.wav"), ("Albüm Kapağı", "*.png *.jpg *.jpeg")])
+        path = filedialog.askopenfilename(filetypes=[("Ses Dosyası", "*.wav")])
         if path:
             self.scan_file_entry.delete(0, tk.END)
             self.scan_file_entry.insert(0, path)
 
     def run_scanner_analysis(self):
+        """
+        [OKUMADA/DOĞRULAMADA KULLANILIR]
+        Tarayıcı (Scanner) sekmesinde 'JSON Mühürü Oku' butonuna basılınca çalışır.
+        Verilen ses dosyasının içindeki LSB mühürünü okur.
+        Eğer mühür bozuksa dosya hash'i ile veritabanında tescil araması yapar.
+        """
         file_path = self.scan_file_entry.get()
         if not file_path:
             messagebox.showwarning("Uyarı", "Lütfen analiz edilecek bir dosya seçin!")
             return
 
+        # Eski sonuç panellerini temizliyoruz
         self.result_placeholder.pack_forget()
         self.info_panel.pack_forget()
 
@@ -703,52 +713,57 @@ class AudioCryptApp(ctk.CTk):
 
         watermark_payload = None
         db_record = None
-        extension = os.path.splitext(file_path)[1].lower()
-        is_image = extension in [".png", ".jpg", ".jpeg"]
         watermark_status = "Medya içinde okunabilir JSON mühür bulunamadı."
 
         try:
-            if is_image:
-                watermark_payload = extract_image_json_watermark(file_path)
-            else:
-                watermark_payload = extract_json_watermark(file_path)
+            # -----------------------------------------------------------------
+            # 1. AŞAMA: Sesten LSB Mühürünün Okunması
+            # -----------------------------------------------------------------
+            watermark_payload = extract_json_watermark(file_path)
 
             if watermark_payload:
-                medya_etiketi = "albüm kapağının" if is_image else "ses dosyasının"
-                watermark_status = f"JSON mühür {medya_etiketi} içinden başarıyla okundu."
+                watermark_status = "JSON mühür ses dosyasının içinden başarıyla okundu."
+                # Çözülen mühür içindeki Seri Numarası alınır
                 extracted_serial = watermark_payload.get("seri_no")
                 if extracted_serial:
+                    # Seri numarası ile SQLite veritabanındaki telif künyesi çekilir
                     db_record = ses_kaydi_bul_seri(extracted_serial)
         except WatermarkReadError as e:
             watermark_status = f"JSON mühür okuma hatası: {e}"
         except Exception as e:
             watermark_status = f"Medya mühürü analiz edilirken hata oluştu: {e}"
 
-        # JSON mühür yoksa eski davranış olarak hash eşleşmesini dene.
+        # -----------------------------------------------------------------
+        # 2. AŞAMA (KURTARMA): Mühür Okunamadıysa Dosya Hash Parmak İzi ile Arama
+        # -----------------------------------------------------------------
         uploaded_hash = dosya_hash_hesapla(file_path)
-        if not db_record and uploaded_hash and not is_image:
+        if not db_record and uploaded_hash:
+            # Ses dosyasının parmak izi hesaplanır ve SQLite'ta aranır
             baglanti = sqlite3.connect("audiocrypt_kurumsal.db")
             imlec = baglanti.cursor()
             imlec.execute("SELECT seri_no FROM ses_kayitlari WHERE dosya_hash = ?", (uploaded_hash,))
             hash_sonuc = imlec.fetchone()
             baglanti.close()
 
+            # Eşleşen bir tescil kaydı bulunursa eser bilgileri getirilir
             if hash_sonuc:
                 db_record = ses_kaydi_bul_seri(hash_sonuc[0])
         
-        # Son çare olarak eski demo çıktıları için dosya adından seri no okumayı dene.
+        # Son çare olarak: Dosya adında AC-XXXXXX şeklinde seri no varsa doğrudan arama yapılıyor (Demo kolaylığı için)
         if not db_record:
             filename = os.path.basename(file_path)
             if filename.startswith("AC-"):
                 seri_parca = filename.split("_")[0]
                 db_record = ses_kaydi_bul_seri(seri_parca)
 
+        # -----------------------------------------------------------------
+        # SONUÇ GÖSTERİMİ
+        # -----------------------------------------------------------------
         if db_record:
-            # 1. Başlık
+            # Eşleşen telif kaydı bulunduysa yeşil renkli kart ve tescil künyesi gösterilir
             title = ctk.CTkLabel(self.info_panel, text="🛡️ Telif Kartı ve Sahiplik Bilgisi", font=(FONT_FAMILY, 20, "bold"), text_color=COLORS["success"])
             title.pack(pady=15)
 
-            # 2. Bilgi Grid
             grid_frame = ctk.CTkFrame(self.info_panel, fg_color=COLORS["panel"], corner_radius=10, border_width=1, border_color=COLORS["line"])
             grid_frame.pack(fill="x", padx=40, pady=10)
 
@@ -772,6 +787,7 @@ class AudioCryptApp(ctk.CTk):
                 v_lbl = ctk.CTkLabel(row, text=value, font=(FONT_FAMILY, 12, "bold"), text_color=COLORS["text"])
                 v_lbl.pack(side="right")
 
+            # Mühür çözülebildiyse, içinden okunan ham JSON kodunu da altta gösteriyoruz
             json_frame = ctk.CTkFrame(self.info_panel, fg_color=COLORS["panel"], corner_radius=10, border_width=1, border_color=COLORS["line"])
             json_frame.pack(fill="both", expand=True, padx=40, pady=(10, 20))
 
@@ -795,7 +811,7 @@ class AudioCryptApp(ctk.CTk):
             json_box.insert(tk.END, json_text)
             json_box.configure(state="disabled")
         else:
-            # Eşleşme Bulunamadı
+            # Eşleşme Bulunamadı (Kırmızı renkli uyarı gösterilir)
             error_text = "❌ Telif Eşleşmesi Bulunamadı"
             if watermark_payload:
                 error_text = "⚠️ JSON Mühür Okundu Ama Kayıt Bulunamadı"
@@ -818,6 +834,7 @@ class AudioCryptApp(ctk.CTk):
                 json_box.configure(state="disabled")
 
         self.info_panel.pack(fill="both", expand=True, padx=20, pady=20)
+
 
     # =========================================================================
     # SEKME 3: İŞLEM GEÇMİŞİ (HISTORY TAB)
